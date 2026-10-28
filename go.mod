@@ -5,7 +5,7 @@ go 1.27
 tool github.com/ianflanagan1/go-baseline/cmd/go-baseline
 
 require (
-	github.com/ianflanagan1/go-ports v0.0.0-00010101000000-000000000000
+	github.com/ianflanagan1/go-ports v0.1.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
 
@@ -19,6 +19,3 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 )
-
-// Until go-ports is published.
-replace github.com/ianflanagan1/go-ports => ../go-ports
