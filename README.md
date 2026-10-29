@@ -6,7 +6,7 @@ Adapters shared by every project on [go-baseline](../go-baseline). Each package 
 |---|---|---|
 | `clock` | The system clock | `Now() time.Time` |
 | `env` | The process environment | `Lookup(key string) (string, bool)` |
-| `random` | `math/rand/v2` (`Fast`) and `crypto/rand` (`Secure`) | `Uint64() uint64`; `io.Reader` |
+| `random` | `crypto/rand` (`Secure`) | `io.Reader` |
 | `files` | A directory, through `os.Root`, so paths can't escape it | `ReadFile(name string) ([]byte, error)`, `WriteFile(name string, content []byte) error` |
 | `httpsend` | HTTP, through `net/http` | `Send(ctx context.Context, req httpmsg.Request) (httpmsg.Response, error)` |
 | `sqlquery` | Postgres, through `database/sql` and pgx | `Query(ctx, sqlmsg.Query) (sqlmsg.Rows, error)`, `Exec(ctx, sqlmsg.Query) (sqlmsg.Result, error)`, `InTx(ctx, func(sqlmsg.Tx) error) error` |

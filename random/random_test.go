@@ -7,16 +7,6 @@ import (
 	"github.com/ianflanagan1/go-adapters/random"
 )
 
-func TestFastNumbersVary(t *testing.T) {
-	seen := map[uint64]bool{}
-	for range 4 {
-		seen[random.Fast{}.Uint64()] = true
-	}
-	if len(seen) == 1 {
-		t.Fatal("got the same number four times")
-	}
-}
-
 func TestSecureFillsTheBuffer(t *testing.T) {
 	b := make([]byte, 32)
 	if n, err := (random.Secure{}).Read(b); err != nil || n != len(b) {
