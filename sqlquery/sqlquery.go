@@ -3,7 +3,8 @@
 // database/sql driver (github.com/jackc/pgx/v5/stdlib), which the
 // composition root imports and opens. Other databases aren't supported yet.
 //
-// With pgx, each Postgres type arrives as one sqlmsg.Kind:
+// With pgx, each Postgres type arrives as one type of sqlmsg.Value, and NULL
+// as sqlmsg.Null:
 //
 //   - smallint, integer, bigint: Int
 //   - real, double precision: Float
@@ -153,21 +154,21 @@ func scan(rows *sql.Rows, n int) ([]sqlmsg.Value, error) {
 func toValue(v any) (sqlmsg.Value, error) {
 	switch v := v.(type) {
 	case nil:
-		return sqlmsg.NullValue(), nil
+		return sqlmsg.Null{}, nil
 	case int64:
-		return sqlmsg.IntValue(v), nil
+		return sqlmsg.Int(v), nil
 	case float64:
-		return sqlmsg.FloatValue(v), nil
+		return sqlmsg.Float(v), nil
 	case string:
-		return sqlmsg.TextValue(v), nil
+		return sqlmsg.Text(v), nil
 	case []byte:
-		return sqlmsg.BytesValue(v), nil
+		return sqlmsg.Bytes(v), nil
 	case bool:
-		return sqlmsg.BoolValue(v), nil
+		return sqlmsg.Bool(v), nil
 	case time.Time:
-		return sqlmsg.TimeValue(v), nil
+		return sqlmsg.Time{Time: v}, nil
 	}
-	return sqlmsg.Value{}, fmt.Errorf("%w: %T", ErrUnsupportedType, v)
+	return nil, fmt.Errorf("%w: %T", ErrUnsupportedType, v)
 }
 
 func args(values []sqlmsg.Value) []any {
@@ -178,20 +179,21 @@ func args(values []sqlmsg.Value) []any {
 	return converted
 }
 
+// argument converts v for the driver. A nil Value is NULL, like sqlmsg.Null.
 func argument(v sqlmsg.Value) any {
-	switch v.Kind {
+	switch v := v.(type) {
 	case sqlmsg.Null:
 		return nil
 	case sqlmsg.Int:
-		return v.Int
+		return int64(v)
 	case sqlmsg.Float:
-		return v.Float
+		return float64(v)
 	case sqlmsg.Text:
-		return v.Text
+		return string(v)
 	case sqlmsg.Bytes:
-		return v.Bytes
+		return []byte(v)
 	case sqlmsg.Bool:
-		return v.Bool
+		return bool(v)
 	case sqlmsg.Time:
 		return v.Time
 	}

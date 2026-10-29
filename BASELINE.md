@@ -6,9 +6,10 @@ The rules this project shares with every Go project built on go-baseline. The li
 
 ## Working on the project
 
-- Run `devbox run check` before finishing a change. It must pass.
-- Don't edit `.golangci.yml` or this file; `verify` fails if they differ from the baseline. A rule that's wrong for every project changes in go-baseline.
+- Run `devbox run -- task check` before finishing a change. It must pass.
+- Don't edit `.golangci.yml`, `Taskfile.yml` or this file; `verify` fails if they differ from the baseline. Put the project's own tasks in `Taskfile.project.yml`, which `Taskfile.yml` includes. A rule that's wrong for every project changes in go-baseline.
 - Don't silence a linter with `//nolint`. Restructure the code so the rule holds.
+- Run `devbox run -- go mod tidy` after changing dependencies. `verify` fails when `go.mod` is untidy, or when the code calls a function with a known vulnerability; upgrade the dependency to fix one.
 - Run tools through devbox (`devbox run -- go ...`), so the pinned Go and golangci-lint are used.
 - Run `go tool go-baseline map` to see each package's role, the ports the shell declares and the adapters that implement them.
 
@@ -40,6 +41,26 @@ When code needs a value from an outside source, such as the time, a file or an A
 
 `verify` enforces this. Wherever code outside the core passes the core, or a pure library, a value as an interface, a function, a type argument or a variadic argument, or stores one in a core type's field, the value's concrete type must be pure: the core's own, a pure standard library type such as `*strings.Builder`, or a pure third-party type. A port, an adapter, a closure, a shell type or a slice made outside the core is reported. `error` is exempt. The linters also ban `context` from the core, because a context signals I/O.
 
+### The shell acts; the core decides
+
+The shell branches only on what the core returns and on whether an error is nil. A value read through a port (a method of an interface the core doesn't declare, or a call to a function value) goes to the core, and the shell acts on the result:
+
+```go
+resp, err := sender.Send(ctx, req)
+if err != nil { // allowed: whether the port failed
+	return fmt.Errorf("sending: %w", err)
+}
+if resp.Status == 429 { ... }     // reported: the shell decides
+switch rates.Next(resp).(type) {  // allowed: the core decides
+case rates.Retry:
+	...
+}
+```
+
+`verify` enforces this. It follows a port's value through anything computed from it outside the core, including `errors.Is`, `len`, a struct or slice it's stored in, and what a call such as `json.Unmarshal` writes through a pointer passed with it. It reports an `if`, `switch` or loop condition that depends on it, a function chosen by it, and passing it to another shell function that branches on it. Ranging over a port's value is allowed: doing the same thing for each element isn't a decision. Neither is which case of a `select` ran. Computing with a port's value without branching, such as sorting it, isn't detected, but belongs in the core too.
+
+A core function earns its place by making a decision its test states. One that only compares its argument with a constant, such as `func IsMissing(err error) bool` or `func TooMany(status int) bool`, moves the shell's `if` into the core without deciding anything. Pass the core the whole value instead, and have it return what to do. When there's more than one thing to do, that's a sum type with a case for each, which the shell switches on: see the retry loop under [Libraries](#libraries).
+
 ### What each role may do
 
 | Rule | Core | Shell | Adapter | Composition root |
@@ -50,11 +71,11 @@ When code needs a value from an outside source, such as the time, a file or an A
 | The clock (`time.Now`, `time.Sleep` and the like), printing (`fmt.Print*`), the global loggers | Banned | Banned | Allowed | Allowed |
 | Reading configuration: environment variables, flags, `os.Args`, the env adapter | Banned | Banned | Banned | Allowed: read it all here and pass the values in |
 | The module's own packages | Core only | Core and shell | Core and other adapters; not the shell | Anything |
-| Size | No limit | No limit | Cyclomatic complexity at most 8, cognitive at most 10, functions at most 50 lines and 30 statements | Functions at most 50 lines and 30 statements |
+| Size | Cognitive complexity at most 10 | Cognitive complexity at most 10 | Cognitive complexity at most 10, functions at most 50 lines and 30 statements | Functions at most 50 lines and 30 statements |
 
 Test files are exempt from the purity and size rules, so integration tests can use real dependencies.
 
-Tests that need a real outside service, such as a database or a third-party API, go in files that start with `//go:build integration`. `devbox run test` leaves them out so it stays fast and needs nothing running; `devbox run integration` runs every test. Tests that use a local stand-in, such as `httptest` or a temporary directory, are ordinary tests.
+Tests that need a real outside service, such as a database or a third-party API, go in files that start with `//go:build integration`. `devbox run -- task test` leaves them out so it stays fast and needs nothing running; `devbox run -- task integration` runs every test. Tests that use a local stand-in, such as `httptest` or a temporary directory, are ordinary tests.
 
 Adapters are kept thin so decisions can't hide in them. When an adapter grows a decision, move the decision to the core and pass its result in.
 
@@ -139,6 +160,103 @@ type fixedClock struct{ now time.Time }
 func (c fixedClock) Now() time.Time { return c.now }
 ```
 
+## Inbound adapters
+
+The adapters above are driven: the shell calls them through its ports. An HTTP server, a queue consumer or a command-line framework drives the program instead: it calls in. It's still an adapter, since it does I/O, and adapters can't import the shell, so it declares the interface it calls, in the core's types. The shell satisfies it without importing the adapter, and `cmd/` passes one to the other.
+
+The adapter only translates: it reads the request into bytes, lets the core parse and validate them, calls the shell and writes the result:
+
+```go
+// Package httpapi serves the orders API over HTTP.
+package httpapi
+
+// Orders is what the API calls to place an order.
+type Orders interface {
+	Place(ctx context.Context, order orders.Order) (orders.Receipt, error)
+}
+
+// Handler returns the API's handler, which places orders through o.
+func Handler(o Orders) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "reading the request", http.StatusBadRequest)
+			return
+		}
+		order, err := orders.Parse(body) // the core decides what's valid
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		receipt, err := o.Place(r.Context(), order) // the shell acts
+		if err != nil {
+			http.Error(w, "placing the order", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(receipt)
+	})
+	return mux
+}
+```
+
+The adapter reads the body itself rather than passing `r.Body` to the core, because the core takes values, not a reader that does I/O. `cmd/` wires the shell into it:
+
+```go
+shop := app.NewShop(store)
+srv := &http.Server{Addr: addr, Handler: httpapi.Handler(shop), ReadHeaderTimeout: 5 * time.Second}
+if err := srv.ListenAndServe(); err != nil {
+	return fmt.Errorf("serving: %w", err)
+}
+return nil
+```
+
+## Databases
+
+Declare a port for what the shell stores and looks up, named in the domain's terms, and put the SQL in the adapter that implements it. The shell and core see only the core's types:
+
+```go
+// Orders is the port for stored orders.
+type Orders interface {
+	// ByID returns the order with id, and whether there is one.
+	ByID(ctx context.Context, id int64) (order orders.Order, found bool, err error)
+}
+```
+
+The adapter runs the query and translates: each column into a field, and "no such row" into `found` rather than an error:
+
+```go
+// ByID looks up the order with id.
+func (s Store) ByID(ctx context.Context, id int64) (orders.Order, bool, error) {
+	var o orders.Order
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, customer, total_pence, placed_at FROM orders WHERE id = $1`, id,
+	).Scan(&o.ID, &o.Customer, &o.TotalPence, &o.PlacedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return orders.Order{}, false, nil
+	}
+	if err != nil {
+		return orders.Order{}, false, fmt.Errorf("loading order %d: %w", id, err)
+	}
+	return o, true, nil
+}
+```
+
+The shell passes both to the core, which decides what a missing order means:
+
+```go
+order, found, err := store.ByID(ctx, id)
+if err != nil {
+	return orders.Reply{}, fmt.Errorf("showing order %d: %w", id, err)
+}
+return orders.Show(order, found), nil
+```
+
+Return concrete values from a port, not an interface such as a sum type: `verify` can't tell what's behind an interface the shell passes to the core. A fake of the port is a map, and the adapter's integration test runs its queries against a real database.
+
+Use go-ports' `sqlmsg` with go-adapters' `sqlquery` only where the core decides the query itself, such as a search over filters the user picks: the core builds a `sqlmsg.Query` and reads the `sqlmsg.Rows` that come back.
+
 ## Libraries
 
 A library is a `pure-library`: it takes data and returns data, and its caller does the I/O. An API client builds requests and parses responses as `httpmsg` values from go-ports; the caller's shell sends them through its own port, which `cmd/` satisfies with go-adapters' `httpsend`:
@@ -149,7 +267,62 @@ resp, err := sender.Send(ctx, req)      // caller's shell, through its port
 rate, err := rates.ParseLatest(resp)    // pure library parses a value
 ```
 
-A flow over several requests, such as paging or retries, stays pure the same way: the library returns the next request, or the delay before a retry, and the shell sends it or waits.
+A flow over several requests, such as paging or retries, stays pure the same way. The library returns the next step as a sum type:
+
+```go
+// Step is what to do after a response: Retry, Done or Fail.
+//
+//sumtype:decl
+type Step interface{ isStep() }
+
+// Retry is to send Request again after Wait.
+type Retry struct {
+	Request httpmsg.Request
+	Wait    time.Duration
+}
+
+// Done holds the rate the response gave.
+type Done struct{ Rate Rate }
+
+// Fail holds why the response gave no rate.
+type Fail struct{ Err error }
+
+func (Retry) isStep() {}
+func (Done) isStep()  {}
+func (Fail) isStep()  {}
+
+// Next decides what to do with resp, the response to req on attempt, counting from 0.
+func Next(req httpmsg.Request, resp httpmsg.Response, attempt int) Step {
+	if resp.Status == 429 && attempt < 3 {
+		return Retry{Request: req, Wait: time.Duration(attempt+1) * time.Second}
+	}
+	rate, err := ParseLatest(resp)
+	if err != nil {
+		return Fail{Err: err}
+	}
+	return Done{Rate: rate}
+}
+```
+
+The caller's shell is a loop that does what each step says:
+
+```go
+for attempt := 0; ; attempt++ {
+	resp, err := sender.Send(ctx, req)
+	if err != nil {
+		return rates.Rate{}, fmt.Errorf("fetching the rate: %w", err)
+	}
+	switch step := rates.Next(req, resp, attempt).(type) {
+	case rates.Retry:
+		sleeper.Sleep(ctx, step.Wait)
+		req = step.Request
+	case rates.Done:
+		return step.Rate, nil
+	case rates.Fail:
+		return rates.Rate{}, fmt.Errorf("fetching the rate: %w", step.Err)
+	}
+}
+```
 
 I/O shared by several projects goes in an `adapters` module, such as go-adapters, never in a library.
 

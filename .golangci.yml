@@ -18,9 +18,11 @@ linters:
     - gochecknoinits
     - gochecksumtype
     - gocognit
-    - gocyclo
+    - gosec
+    - modernize
     - revive
     - testpackage
+    - wrapcheck
   settings:
     errorlint:
       errorf: true
@@ -35,12 +37,18 @@ linters:
       default-signifies-exhaustive: false
     gocognit:
       min-complexity: 10
-    gocyclo:
-      min-complexity: 8
+    govet:
+      enable:
+        - nilness
     revive:
       enable-default-rules: true
       rules:
         - name: exported
+    wrapcheck:
+      # The module's own packages wrap their errors with context; wrap those
+      # from other modules where they come in.
+      ignore-package-globs:
+        - github.com/ianflanagan1/go-adapters/*
   exclusions:
     rules:
       - path: _test\.go
@@ -48,9 +56,14 @@ linters:
           - forbidigo
           - funlen
           - gocognit
-          - gocyclo
+          - gosec
+          - wrapcheck
+      # Running commands and opening files by name is what adapters are for.
+      - text: G204|G304
+        linters:
+          - gosec
 
 formatters:
   enable:
-    - gofmt
+    - gofumpt
     - goimports

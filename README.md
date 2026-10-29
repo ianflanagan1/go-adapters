@@ -17,11 +17,11 @@ The request, response, query and row types are in [go-ports](https://github.com/
 
 ## Testing
 
-`devbox run test` runs everything that needs nothing outside the process. `sqlquery`'s tests need Postgres:
+`devbox run -- task test` runs everything that needs nothing outside the process. `sqlquery`'s tests need Postgres:
 
 ```sh
 docker run --rm -d -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:17
-GO_ADAPTERS_POSTGRES_URL=postgres://postgres:test@localhost:55432/postgres devbox run integration
+GO_ADAPTERS_POSTGRES_URL=postgres://postgres:test@localhost:55432/postgres devbox run -- task integration
 ```
 
 Add an adapter here when more than one project needs it. Keep it thin: when it needs a decision, the decision belongs in the caller's core.

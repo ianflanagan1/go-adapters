@@ -21,7 +21,7 @@ func TestARequestRoundTrips(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpsend.Client{HTTP: server.Client(), MaxBody: 1024}
+	client := httpsend.New(server.Client(), 1024)
 	resp, err := client.Send(context.Background(), httpmsg.Request{
 		Method: http.MethodPost, URL: server.URL, Header: map[string][]string{"X-Test": {"yes"}}, Body: []byte("hi"),
 	})
@@ -39,7 +39,7 @@ func TestABodyOverTheLimitIsAnError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpsend.Client{HTTP: server.Client(), MaxBody: 9}
+	client := httpsend.New(server.Client(), 9)
 	_, err := client.Send(context.Background(), httpmsg.Request{Method: http.MethodGet, URL: server.URL})
 	if !errors.Is(err, httpsend.ErrBodyTooLarge) {
 		t.Fatalf("got %v, want ErrBodyTooLarge", err)
@@ -51,8 +51,17 @@ func TestAnUnreachableServerIsAnError(t *testing.T) {
 	url := server.URL
 	server.Close()
 
-	client := httpsend.Client{HTTP: http.DefaultClient, MaxBody: 1024}
+	client := httpsend.New(http.DefaultClient, 1024)
 	if _, err := client.Send(context.Background(), httpmsg.Request{Method: http.MethodGet, URL: url}); err == nil {
 		t.Fatal("got no error")
 	}
+}
+
+func TestABodyLimitBelowOneIsAProgrammingError(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("got no panic")
+		}
+	}()
+	httpsend.New(http.DefaultClient, 0)
 }

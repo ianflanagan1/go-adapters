@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -44,15 +45,18 @@ func open(t *testing.T) sqlquery.DB {
 	return d
 }
 
-func TestEachKindRoundTrips(t *testing.T) {
+func TestEachTypeOfValueRoundTrips(t *testing.T) {
 	d := open(t)
 	ctx := context.Background()
 	at := time.Date(2026, time.October, 28, 9, 30, 0, 0, time.UTC)
 	insert := sqlmsg.Query{
 		SQL: "INSERT INTO sqlquery_test VALUES ($1, $2, $3, $4, $5, $6, $7)",
 		Args: []sqlmsg.Value{
-			sqlmsg.IntValue(1), sqlmsg.TextValue("a"), sqlmsg.FloatValue(1.5),
-			sqlmsg.BytesValue([]byte{1, 2}), sqlmsg.BoolValue(true), sqlmsg.TimeValue(at), sqlmsg.TextValue("12.345"),
+			sqlmsg.Int(1), sqlmsg.Text("a"), sqlmsg.Float(1.5),
+			sqlmsg.Bytes{1, 2},
+			sqlmsg.Bool(true),
+			sqlmsg.Time{Time: at},
+			sqlmsg.Text("12.345"),
 		},
 	}
 	if result, err := d.Exec(ctx, insert); err != nil || result.RowsAffected != 1 {
@@ -66,9 +70,18 @@ func TestEachKindRoundTrips(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(rows.Values))
 	}
 	row := rows.Values[0]
-	if row[0].Int != 1 || row[1].Text != "a" || row[2].Float != 1.5 || string(row[3].Bytes) != "\x01\x02" ||
-		!row[4].Bool || !row[5].Time.Equal(at) || row[6].Text != "12.345" || row[7].Kind != sqlmsg.Null {
-		t.Fatalf("got %+v", row)
+	// The time may come back in another zone, so it's compared as an instant.
+	if when, ok := row[5].(sqlmsg.Time); !ok || !when.Equal(at) {
+		t.Fatalf("got %#v for the time", row[5])
+	}
+	want := []sqlmsg.Value{
+		sqlmsg.Int(1), sqlmsg.Text("a"), sqlmsg.Float(1.5),
+		sqlmsg.Bytes{1, 2},
+		sqlmsg.Bool(true), row[5], sqlmsg.Text("12.345"),
+		sqlmsg.Null{},
+	}
+	if !reflect.DeepEqual(row, want) {
+		t.Fatalf("got %#v, want %#v", row, want)
 	}
 	if i, ok := rows.Column("amount"); !ok || i != 6 {
 		t.Fatalf("got column %d, %v", i, ok)
@@ -142,10 +155,12 @@ func TestOtherPostgresTypesArriveAsTextOrBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := rows.Values[0]
-	if row[0].Text != "{1,2}" || row[1].Text != "00000000-0000-0000-0000-000000000001" ||
-		row[2].Text != "01:00:00" || row[3].Kind != sqlmsg.Bytes || string(row[3].Bytes) != `{"a": 1}` {
-		t.Fatalf("got %+v", row)
+	want := []sqlmsg.Value{
+		sqlmsg.Text("{1,2}"), sqlmsg.Text("00000000-0000-0000-0000-000000000001"),
+		sqlmsg.Text("01:00:00"), sqlmsg.Bytes(`{"a": 1}`),
+	}
+	if !reflect.DeepEqual(rows.Values[0], want) {
+		t.Fatalf("got %#v, want %#v", rows.Values[0], want)
 	}
 }
 
