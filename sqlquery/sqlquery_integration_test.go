@@ -50,8 +50,10 @@ func TestEachKindRoundTrips(t *testing.T) {
 	at := time.Date(2026, time.October, 28, 9, 30, 0, 0, time.UTC)
 	insert := sqlmsg.Query{
 		SQL: "INSERT INTO sqlquery_test VALUES ($1, $2, $3, $4, $5, $6, $7)",
-		Args: []sqlmsg.Value{sqlmsg.IntValue(1), sqlmsg.TextValue("a"), sqlmsg.FloatValue(1.5),
-			sqlmsg.BytesValue([]byte{1, 2}), sqlmsg.BoolValue(true), sqlmsg.TimeValue(at), sqlmsg.TextValue("12.345")},
+		Args: []sqlmsg.Value{
+			sqlmsg.IntValue(1), sqlmsg.TextValue("a"), sqlmsg.FloatValue(1.5),
+			sqlmsg.BytesValue([]byte{1, 2}), sqlmsg.BoolValue(true), sqlmsg.TimeValue(at), sqlmsg.TextValue("12.345"),
+		},
 	}
 	if result, err := d.Exec(ctx, insert); err != nil || result.RowsAffected != 1 {
 		t.Fatalf("got %+v, %v", result, err)
